@@ -2,11 +2,14 @@
 """Local Cisco VPN bridge: OpenConnect authentication, NetworkManager tunnel."""
 
 import json
+import os
 import re
+import selectors
 import shlex
 import signal
 import subprocess
 import sys
+import time
 from urllib.parse import urlsplit
 
 import gi
@@ -18,6 +21,7 @@ from gi.repository import Gio, GLib, NM
 PROFILE = "Omarchy Cisco VPN"
 SERVICE = "org.freedesktop.NetworkManager.openconnect"
 UUID = re.compile(r"^[0-9a-fA-F-]{36}$")
+MAX_OUTPUT_BYTES = 1024 * 1024
 
 
 class VpnError(Exception):
@@ -50,17 +54,63 @@ def run(args, *, input=None, timeout=100):
     try:
         with subprocess.Popen(
             args, stdin=subprocess.PIPE if input is not None else subprocess.DEVNULL,
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         ) as child:
             active_child = child
             try:
+                output = {child.stdout: [], child.stderr: []}
+                total = 0
+                deadline = time.monotonic() + timeout
+                pending = memoryview(input.encode() if input is not None else b"")
+                with selectors.DefaultSelector() as selector:
+                    for stream in output:
+                        os.set_blocking(stream.fileno(), False)
+                        selector.register(stream, selectors.EVENT_READ)
+                    if input is not None:
+                        os.set_blocking(child.stdin.fileno(), False)
+                        if pending:
+                            selector.register(child.stdin, selectors.EVENT_WRITE)
+                        else:
+                            child.stdin.close()
+                    while selector.get_map():
+                        remaining = deadline - time.monotonic()
+                        if remaining <= 0:
+                            child.kill()
+                            child.wait()
+                            raise VpnError(f"{args[0]} timed out")
+                        for key, _ in selector.select(remaining):
+                            stream = key.fileobj
+                            if stream is child.stdin:
+                                try:
+                                    count = os.write(stream.fileno(), pending[:65536])
+                                except BrokenPipeError:
+                                    count = len(pending)
+                                pending = pending[count:]
+                                if not pending:
+                                    selector.unregister(stream)
+                                    stream.close()
+                            else:
+                                chunk = os.read(stream.fileno(), 65536)
+                                if not chunk:
+                                    selector.unregister(stream)
+                                else:
+                                    total += len(chunk)
+                                    if total > MAX_OUTPUT_BYTES:
+                                        child.kill()
+                                        child.wait()
+                                        raise VpnError(f"{args[0]} produced too much output")
+                                    output[stream].append(chunk)
                 try:
-                    stdout, stderr = child.communicate(input=input, timeout=timeout)
+                    child.wait(timeout=max(0, deadline - time.monotonic()))
                 except subprocess.TimeoutExpired as error:
                     child.kill()
-                    child.communicate()
+                    child.wait()
                     raise VpnError(f"{args[0]} timed out") from error
-                return subprocess.CompletedProcess(args, child.returncode, stdout, stderr)
+                return subprocess.CompletedProcess(
+                    args, child.returncode,
+                    b"".join(output[child.stdout]).decode(errors="replace"),
+                    b"".join(output[child.stderr]).decode(errors="replace"),
+                )
             finally:
                 active_child = None
     except OSError as error:

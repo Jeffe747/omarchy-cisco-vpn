@@ -53,7 +53,8 @@ is disabled. The password is sent over stdin to OpenConnect for one
 authentication attempt and is not saved in the profile or passed as a command
 argument. A short-lived session cookie is passed through NetworkManager's
 in-memory profile and cleared after the attempt. The popup does not print raw
-OpenConnect errors because those may contain sensitive details. Never commit
+OpenConnect errors because those may contain sensitive details. The helper
+stops a subprocess if its combined output exceeds 1 MiB. Never commit
 your VPN server details, credentials, NetworkManager profile, or logs to this
 repository.
 

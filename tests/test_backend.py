@@ -11,6 +11,35 @@ import backend
 
 
 class BackendTest(unittest.TestCase):
+    def test_run_limits_combined_subprocess_output(self):
+        for stream in ("stdout", "stderr"):
+            with self.subTest(stream=stream), self.assertRaisesRegex(
+                    backend.VpnError, "produced too much output"):
+                backend.run([sys.executable, "-c",
+                             f"import sys; sys.{stream}.buffer.write(b'x' * (2 * 1024 * 1024))"],
+                            timeout=5)
+
+    def test_run_enforces_exact_combined_limit(self):
+        script = ("import sys; sys.stdout.buffer.write(b'x' * 524288); "
+                  "sys.stderr.buffer.write(b'y' * int(sys.argv[1]))")
+        result = backend.run([sys.executable, "-c", script, "524288"], timeout=5)
+        self.assertEqual(len(result.stdout) + len(result.stderr), backend.MAX_OUTPUT_BYTES)
+        with self.assertRaisesRegex(backend.VpnError, "produced too much output"):
+            backend.run([sys.executable, "-c", script, "524289"], timeout=5)
+
+    def test_run_preserves_stdin_and_both_output_streams(self):
+        result = backend.run(
+            [sys.executable, "-c",
+             "import sys; print(sys.stdin.readline().strip()); print('warning', file=sys.stderr)"],
+            input="secret\n", timeout=5,
+        )
+        self.assertEqual((result.returncode, result.stdout, result.stderr),
+                         (0, "secret\n", "warning\n"))
+
+    def test_run_still_times_out_without_output(self):
+        with self.assertRaisesRegex(backend.VpnError, "timed out"):
+            backend.run([sys.executable, "-c", "import time; time.sleep(2)"], timeout=0.1)
+
     def test_status_reads_gateway_from_vpn_data(self):
         vpn = Mock()
         vpn.get_data_item.return_value = "https://vpn.example.com"
