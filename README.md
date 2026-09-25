@@ -7,19 +7,24 @@ connect/disconnect controls.
 
 ## Install
 
-Install the Arch dependencies:
-
-```sh
-omarchy pkg add networkmanager-openconnect python-gobject
-```
-
 Install the widget from this repository:
 
 ```sh
 omarchy plugin add https://github.com/Jeffe747/omarchy-cisco-vpn.git --enable
 ```
 
-Click the VPN icon in the right-hand bar section. Enter the HTTPS VPN server,
+Click the VPN icon in the right-hand bar section. On first use, if
+`networkmanager-openconnect` or `python-gobject` is missing, the widget offers
+an **Install packages** button. Click it to authorize the installation through
+Omarchy's graphical administrator prompt. The `omarchy plugin add` command
+does not install packages itself. If graphical authorization is unavailable,
+install the dependencies in a terminal instead:
+
+```sh
+omarchy pkg add networkmanager-openconnect python-gobject
+```
+
+Then open the widget again. Enter the HTTPS VPN server,
 username, and password, then choose **Connect**. While connecting, use
 **Cancel** to stop the attempt. When connected, the button becomes
 **Disconnect**. The server can be entered as a hostname or an HTTPS URL.

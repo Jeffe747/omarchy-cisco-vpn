@@ -17,14 +17,31 @@ Panel {
   property bool cancelRequested: false
   property string action: ""
   property string request: ""
+  property bool dependenciesKnown: false
+  property var missingPackages: []
   readonly property string helper: Qt.resolvedUrl("backend.py").toString().replace(/^file:\/\//, "")
+  readonly property string dependencyHelper: Qt.resolvedUrl("dependencies.py").toString().replace(/^file:\/\//, "")
+  readonly property bool dependenciesReady: dependenciesKnown && missingPackages.length === 0
 
   implicitWidth: icon.implicitWidth
   implicitHeight: icon.implicitHeight
 
   function refresh() {
-    if (busy || statusProcess.running) return
+    if (busy || dependencyProcess.running) return
+    if (!dependenciesKnown) {
+      dependencyProcess.running = true
+      return
+    }
+    if (!dependenciesReady || statusProcess.running) return
     statusProcess.running = true
+  }
+
+  function installDependencies() {
+    if (busy || dependenciesReady || !dependenciesKnown) return
+    busy = true
+    action = "install"
+    errorText = ""
+    installProcess.running = true
   }
 
   function applyResult(text, exitCode, showError) {
@@ -86,8 +103,8 @@ Panel {
   }
 
   onOpenedChanged: if (opened) {
+    dependenciesKnown = false
     refresh()
-    Qt.callLater(function() { serverField.forceActiveFocus() })
   } else {
     passwordField.text = ""
   }
@@ -98,6 +115,44 @@ Panel {
     running: true
     triggeredOnStart: true
     onTriggered: root.refresh()
+  }
+
+  Process {
+    id: dependencyProcess
+    command: ["python", root.dependencyHelper]
+    stdout: StdioCollector {
+      id: dependencyOutput
+      waitForEnd: true
+    }
+    onExited: function(code) {
+      try {
+        var result = JSON.parse(dependencyOutput.text)
+        if (code !== 0 || result.ok !== true || !Array.isArray(result.missing))
+          throw new Error("Invalid dependency check")
+        root.missingPackages = result.missing
+        root.dependenciesKnown = true
+        if (root.dependenciesReady) {
+          root.errorText = ""
+          root.refresh()
+          if (root.opened) Qt.callLater(function() { serverField.forceActiveFocus() })
+        }
+      } catch (error) {
+        root.errorText = "Could not check installed packages; run omarchy pkg add networkmanager-openconnect python-gobject in a terminal"
+      }
+    }
+  }
+
+  Process {
+    id: installProcess
+    command: ["pkexec", "/usr/share/omarchy/bin/omarchy-pkg-add",
+              "networkmanager-openconnect", "python-gobject"]
+    onExited: function(code) {
+      root.busy = false
+      root.dependenciesKnown = false
+      if (code !== 0)
+        root.errorText = "Installation failed or was cancelled; try again or run omarchy pkg add networkmanager-openconnect python-gobject in a terminal"
+      root.refresh()
+    }
   }
 
   Process {
@@ -161,7 +216,18 @@ Panel {
       spacing: Style.space(8)
 
       Text {
-        text: root.busy ? (root.action === "connect" ? "Cisco VPN · Connecting…" : "Cisco VPN · Disconnecting…") : (root.connected ? "Cisco VPN · Connected" : "Cisco VPN · Disconnected")
+        text: root.busy ? (root.action === "connect" ? "Cisco VPN · Connecting…" : (root.action === "install" ? "Cisco VPN · Installing packages…" : "Cisco VPN · Disconnecting…")) : (root.connected ? "Cisco VPN · Connected" : "Cisco VPN · Disconnected")
+        color: root.barForeground
+        font.family: root.bar ? root.bar.fontFamily : Style.font.family
+        font.pixelSize: Style.font.body
+      }
+
+      Text {
+        visible: !root.dependenciesReady && root.dependenciesKnown
+        width: parent.width
+        wrapMode: Text.WordWrap
+        text: "This widget needs " + root.missingPackages.join(" and ") + ". Install the missing packages? Administrator authentication is required."
+        textFormat: Text.PlainText
         color: root.barForeground
         font.family: root.bar ? root.bar.fontFamily : Style.font.family
         font.pixelSize: Style.font.body
@@ -169,6 +235,7 @@ Panel {
 
       TextField {
         id: serverField
+        visible: root.dependenciesReady
         width: parent.width
         placeholderText: "Server (vpn.example.com)"
         text: root.server
@@ -182,6 +249,7 @@ Panel {
 
       TextField {
         id: userField
+        visible: root.dependenciesReady
         width: parent.width
         placeholderText: "Username"
         text: root.username
@@ -195,6 +263,7 @@ Panel {
 
       TextField {
         id: passwordField
+        visible: root.dependenciesReady
         width: parent.width
         placeholderText: "Password"
         password: true
@@ -214,6 +283,7 @@ Panel {
       }
 
       Rectangle {
+        visible: root.dependenciesReady || root.dependenciesKnown
         width: parent.width
         height: Style.space(36)
         radius: Style.cornerRadius
@@ -222,15 +292,15 @@ Panel {
 
         Text {
           anchors.centerIn: parent
-          text: root.busy ? (root.action === "connect" ? (root.cancelRequested ? "Cancelling…" : "Cancel") : "Working…") : (root.connected ? "Disconnect" : "Connect")
+          text: root.busy ? (root.action === "connect" ? (root.cancelRequested ? "Cancelling…" : "Cancel") : "Working…") : (!root.dependenciesReady ? "Install packages" : (root.connected ? "Disconnect" : "Connect"))
           color: Color.background
           font.family: root.bar ? root.bar.fontFamily : Style.font.family
         }
         MouseArea {
           anchors.fill: parent
-          enabled: !root.busy || (root.action === "connect" && !root.cancelRequested)
+          enabled: (!root.busy && root.dependenciesKnown) || (root.action === "connect" && !root.cancelRequested)
           cursorShape: Qt.PointingHandCursor
-          onClicked: root.busy ? root.cancelVpn() : (root.connected ? root.disconnectVpn() : root.connectVpn())
+          onClicked: root.busy ? root.cancelVpn() : (!root.dependenciesReady ? root.installDependencies() : (root.connected ? root.disconnectVpn() : root.connectVpn()))
         }
       }
     }
