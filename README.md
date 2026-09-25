@@ -34,6 +34,18 @@ If you used the earlier local proof of concept, disable its widget first with
 `Omarchy Cisco VPN` NetworkManager profile, so your saved server and username
 remain available. Do not enable both widgets at the same time.
 
+## Remove
+
+Disconnect in the widget first if the VPN is active, then remove the plugin:
+
+```sh
+omarchy plugin remove jeffe747.cisco-vpn
+```
+
+Removing the plugin does not disconnect an active VPN, uninstall system
+packages, or delete the `Omarchy Cisco VPN` NetworkManager profile. The
+profile may also be used by an earlier local version of this widget.
+
 ## Credentials and limitations
 
 The server and username are stored in the NetworkManager profile; autoconnect
