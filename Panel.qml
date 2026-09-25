@@ -223,6 +223,17 @@ Panel {
       }
 
       Text {
+        visible: root.dependenciesReady
+        width: parent.width
+        wrapMode: Text.WordWrap
+        text: "Connect updates NetworkManager profile “Omarchy Cisco VPN” (server and username)"
+        color: root.barForeground
+        opacity: 0.65
+        font.family: root.bar ? root.bar.fontFamily : Style.font.family
+        font.pixelSize: Style.font.bodySmall
+      }
+
+      Text {
         visible: !root.dependenciesReady && root.dependenciesKnown
         width: parent.width
         wrapMode: Text.WordWrap
